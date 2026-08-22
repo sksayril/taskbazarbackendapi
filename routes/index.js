@@ -32,7 +32,7 @@ router.get('/refer/:referCode', async (req, res) => {
           <body>
             <h1>Referral Code Not Found</h1>
             <p>The referral code "${referCode}" does not exist.</p>
-            <p><a href="https://play.google.com/store/apps/details?id=com.profitkaro">Download ProfitKaro App</a></p>
+            <p><a href="https://play.google.com/store/apps/details?id=com.taskbazar.taskbazar">Download TaskBazar App</a></p>
           </body>
         </html>
       `)
@@ -40,7 +40,7 @@ router.get('/refer/:referCode', async (req, res) => {
 
     // Android Intent URL format for deep linking
     // This will try to open the app first, then fallback to Play Store
-    const appPackage = 'com.profitkaro'
+    const appPackage = 'com.taskbazar.taskbazar'
     const referCodeUpper = referCode.trim().toUpperCase()
     
     // Play Store URL with referrer parameter (properly formatted for install referrer)
@@ -55,11 +55,11 @@ router.get('/refer/:referCode', async (req, res) => {
     
     // Intent URL with multiple parameter formats for better compatibility
     // Format: intent://[host]/[path]?[parameters]#Intent;scheme=[scheme];package=[package];S.[key]=[value];end
-    const intentUrl = `intent://refer?code=${referCodeUpper}&refer=${referCodeUpper}#Intent;scheme=profitkaro;package=${appPackage};S.referCode=${referCodeUpper};S.code=${referCodeUpper};S.refer=${referCodeUpper};end`
+    const intentUrl = `intent://refer?code=${referCodeUpper}&refer=${referCodeUpper}#Intent;scheme=taskbazar;package=${appPackage};S.referCode=${referCodeUpper};S.code=${referCodeUpper};S.refer=${referCodeUpper};end`
     
     // Custom scheme fallback (multiple formats for better compatibility)
-    const customScheme1 = `profitkaro://refer?code=${referCodeUpper}&refer=${referCodeUpper}`
-    const customScheme2 = `profitkaro://refer?referCode=${referCodeUpper}`
+    const customScheme1 = `taskbazar://refer?code=${referCodeUpper}&refer=${referCodeUpper}`
+    const customScheme2 = `taskbazar://refer?referCode=${referCodeUpper}`
 
     // Return HTML page with JavaScript to handle redirect
     res.send(`
@@ -68,8 +68,8 @@ router.get('/refer/:referCode', async (req, res) => {
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Redirecting to ProfitKaro...</title>
-          <meta name="description" content="Opening ProfitKaro app with referral code ${referCodeUpper}">
+          <title>Redirecting to TaskBazar...</title>
+          <meta name="description" content="Opening TaskBazar app with referral code ${referCodeUpper}">
           <style>
             body {
               font-family: Arial, sans-serif;
@@ -123,7 +123,7 @@ router.get('/refer/:referCode', async (req, res) => {
         </head>
         <body>
           <div class="container">
-            <h1>Redirecting to ProfitKaro...</h1>
+            <h1>Redirecting to TaskBazar...</h1>
             <div class="spinner"></div>
             <p>Opening app with referral code:</p>
             <div class="code-display">${referCodeUpper}</div>
@@ -217,12 +217,12 @@ router.get('/refer/:referCode', async (req, res) => {
                 setTimeout(function() {
                   if (!appOpened) {
                     showFallback();
-                    window.location.href = 'https://apps.apple.com/app/profitkaro';
+                    window.location.href = 'https://apps.apple.com/app/taskbazar';
                   }
                 }, 1500);
               } catch(e) {
                 showFallback();
-                window.location.href = 'https://apps.apple.com/app/profitkaro';
+                window.location.href = 'https://apps.apple.com/app/taskbazar';
               }
             } else {
               // Desktop: Redirect to Play Store
@@ -244,7 +244,7 @@ router.get('/refer/:referCode', async (req, res) => {
         <body>
           <h1>Error</h1>
           <p>An error occurred while processing your referral link.</p>
-          <p><a href="https://play.google.com/store/apps/details?id=com.profitkaro">Download ProfitKaro App</a></p>
+          <p><a href="https://play.google.com/store/apps/details?id=com.taskbazar.taskbazar">Download TaskBazar App</a></p>
         </body>
       </html>
     `)
