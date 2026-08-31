@@ -10,8 +10,9 @@ var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var adminRouter = require('./routes/admin');
 
-// Initialize Cron Jobs
+// Initialize Cron Jobs and Migration Utilities
 const { startCronJobs } = require('./utilities/cronJobs');
+const { fixAllUserReferCodes } = require('./utilities/fixReferCodes');
 
 var app = express();
 
@@ -28,10 +29,16 @@ app.use('/', indexRouter);
 app.use('/users', usersRouter);
 app.use('/admin', adminRouter);
 
-// Start cron jobs when database is connected
+// Start cron jobs and run migration when database is connected
 const mongoose = require('mongoose');
-mongoose.connection.once('open', () => {
-  console.log('Database connected. Starting cron jobs...');
+mongoose.connection.once('open', async () => {
+  console.log('Database connected. Checking user refer code lengths...');
+  try {
+    await fixAllUserReferCodes();
+  } catch (err) {
+    console.error('Error migrating user refer codes:', err);
+  }
+  console.log('Starting cron jobs...');
   startCronJobs();
 });
 

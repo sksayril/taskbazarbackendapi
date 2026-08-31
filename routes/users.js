@@ -98,7 +98,7 @@ function evaluateAdDecision(taskRule, actionCount = 0) {
   }
 }
 
-// Function to generate unique referCode (format: PRK08F9 - 3 letters + 2 digits + 1 letter)
+// Function to generate unique referCode (format: PRK08F9 - 3 letters + 2 digits + 1 letter + 1 digit = 7 characters)
 function generateReferCode() {
   const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const digits = '0123456789';
@@ -112,8 +112,10 @@ function generateReferCode() {
   for (let i = 0; i < 2; i++) {
     code += digits.charAt(Math.floor(Math.random() * digits.length));
   }
-  // Last letter
+  // 1 letter
   code += letters.charAt(Math.floor(Math.random() * letters.length));
+  // 1 digit
+  code += digits.charAt(Math.floor(Math.random() * digits.length));
   
   return code;
 }
