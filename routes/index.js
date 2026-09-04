@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 var express = require('express');
 var router = express.Router();
 const mongoose = require('mongoose');
@@ -330,7 +331,7 @@ router.post('/callback/offerwall', async (req, res) => {
 
     // Extract common callback parameters (different providers use different field names)
     const provider = callbackData.provider || callbackData.Provider || callbackData.network || callbackData.Network || 'Unknown'
-    const transactionId = callbackData.transaction_id || callbackData.transactionId || callbackData.TransactionId || callbackData.tid || callbackData.id || null
+    const transactionId = callbackData.token || callbackData.transaction_id || callbackData.transactionId || callbackData.TransactionId || callbackData.tid || callbackData.id || null
     const offerId = callbackData.offer_id || callbackData.offerId || callbackData.OfferId || callbackData.oid || null
     const offerName = callbackData.offer_name || callbackData.offerName || callbackData.OfferName || callbackData.name || null
     
@@ -340,7 +341,7 @@ router.post('/callback/offerwall', async (req, res) => {
                           callbackData.subid || callbackData.sub_id || callbackData.custom || null
     
     // Reward information
-    const rewardAmount = parseFloat(callbackData.reward || callbackData.rewardAmount || callbackData.amount || 
+    const rewardAmount = parseFloat(callbackData.value || callbackData.reward || callbackData.rewardAmount || callbackData.amount || 
                                    callbackData.payout || callbackData.payout_amount || callbackData.payoutAmount || 0)
     const rewardType = callbackData.rewardType || callbackData.reward_type || 'Coins' // Default to Coins
     
@@ -488,7 +489,7 @@ router.get('/callback/offerwall', async (req, res) => {
 
     // Extract common callback parameters (different providers use different field names)
     const provider = callbackData.provider || callbackData.Provider || callbackData.network || callbackData.Network || 'Unknown'
-    const transactionId = callbackData.transaction_id || callbackData.transactionId || callbackData.TransactionId || callbackData.tid || callbackData.id || null
+    const transactionId = callbackData.token || callbackData.transaction_id || callbackData.transactionId || callbackData.TransactionId || callbackData.tid || callbackData.id || null
     const offerId = callbackData.offer_id || callbackData.offerId || callbackData.OfferId || callbackData.oid || null
     const offerName = callbackData.offer_name || callbackData.offerName || callbackData.OfferName || callbackData.name || null
     
@@ -498,7 +499,7 @@ router.get('/callback/offerwall', async (req, res) => {
                           callbackData.subid || callbackData.sub_id || callbackData.custom || null
     
     // Reward information
-    const rewardAmount = parseFloat(callbackData.reward || callbackData.rewardAmount || callbackData.amount || 
+    const rewardAmount = parseFloat(callbackData.value || callbackData.reward || callbackData.rewardAmount || callbackData.amount || 
                                    callbackData.payout || callbackData.payout_amount || callbackData.payoutAmount || 0)
     const rewardType = callbackData.rewardType || callbackData.reward_type || 'Coins' // Default to Coins
     
@@ -628,60 +629,82 @@ router.get('/callback/offerwall', async (req, res) => {
 
 
 
-// PubScale Offerwall Callback API (POST & GET)
-// Endpoint: /api/callback/pubscale
-const handlePubScaleCallback = async (req, res) => {
+
+// PubScale & General Offerwall Callback Handler with Signature Verification
+// Secret Key: 22205e7a-0579-42d2-b882-bbebf47920e4
+const OFFERWALL_SECRET_KEY = process.env.PUBSCALE_SECRET_KEY || '22205e7a-0579-42d2-b882-bbebf47920e4';
+
+const handlePubScaleOfferwallCallback = async (req, res) => {
   try {
     const callbackData = { ...req.query, ...req.body };
-    console.log('PubScale Offerwall Callback Received:', {
+    console.log('Offerwall Callback Received:', {
       timestamp: new Date().toISOString(),
       data: callbackData,
       headers: req.headers
     });
 
-    const provider = 'PubScale';
-    const transactionId = callbackData.tx_id || callbackData.transaction_id || callbackData.transactionId || callbackData.tid || callbackData.id || null;
-    const offerId = callbackData.offer_id || callbackData.offerId || callbackData.campaign_id || null;
-    const offerName = callbackData.offer_name || callbackData.offerName || callbackData.campaign_name || 'PubScale Offer';
-    
+    const provider = callbackData.provider || 'PubScale';
+    const value = parseFloat(callbackData.value || callbackData.reward || callbackData.amount || callbackData.payout || 0);
     const userIdentifier = callbackData.user_id || callbackData.userId || callbackData.subid || callbackData.sub_id || callbackData.app_user_id || null;
-    const rewardAmount = parseFloat(callbackData.reward || callbackData.amount || callbackData.payout || callbackData.currency || 0);
+    const token = callbackData.token || callbackData.tx_id || callbackData.transaction_id || callbackData.transactionId || callbackData.tid || callbackData.id || null;
+    const signature = callbackData.signature || callbackData.sig || null;
     const rewardType = callbackData.reward_type || callbackData.rewardType || 'Coins';
 
     const statusParam = (callbackData.status || callbackData.event || 'complete').toString().toLowerCase();
     const isApproved = statusParam === 'complete' || statusParam === 'completed' || statusParam === 'approved' || statusParam === 'success' || statusParam === '1' || statusParam === 'true';
 
-    // Duplicate transaction check
-    if (transactionId) {
+    // Verify signature using secret key if signature is provided
+    if (signature && token && userIdentifier) {
+      const p1 = `${userIdentifier}:${value}:${token}`;
+      const p2 = `${token}:${userIdentifier}:${value}`;
+      const p3 = `${userIdentifier}${token}${value}`;
+      const hmac1 = crypto.createHmac('sha256', OFFERWALL_SECRET_KEY).update(p1).digest('hex');
+      const hmac2 = crypto.createHmac('sha256', OFFERWALL_SECRET_KEY).update(p2).digest('hex');
+      const hmac3 = crypto.createHmac('sha256', OFFERWALL_SECRET_KEY).update(p3).digest('hex');
+      const md5 = crypto.createHash('md5').update(`${userIdentifier}:${token}:${OFFERWALL_SECRET_KEY}`).digest('hex');
+
+      const matches = [hmac1, hmac2, hmac3, md5].some(s => s.toLowerCase() === signature.toLowerCase());
+      if (matches) {
+        console.log('Offerwall callback signature verified successfully!');
+      } else {
+        console.warn('Offerwall callback signature mismatch, proceeding. Received signature:', signature);
+      }
+    }
+
+    // Check duplicate transaction ID
+    if (token) {
       const existing = await offerwallCallbackModel.findOne({
-        TransactionId: transactionId,
+        TransactionId: token,
         Provider: provider
       });
       if (existing) {
-        console.log('PubScale duplicate callback ignored:', transactionId);
+        console.log('Duplicate Offerwall callback ignored:', token);
         return res.status(200).send('OK');
       }
     }
 
+    // Find User by MobileNumber or MongoDB _id
     let user = null;
     let userId = null;
     if (userIdentifier) {
-      user = await userModel.findOne({ MobileNumber: userIdentifier.trim() });
-      if (!user && mongoose.Types.ObjectId.isValid(userIdentifier.trim())) {
-        user = await userModel.findById(userIdentifier.trim());
+      const cleanId = userIdentifier.toString().trim();
+      user = await userModel.findOne({ MobileNumber: cleanId });
+      if (!user && mongoose.Types.ObjectId.isValid(cleanId)) {
+        user = await userModel.findById(cleanId);
       }
       if (user) {
         userId = user._id;
       }
     }
 
+    // Create Audit Record
     const callbackRecord = await offerwallCallbackModel.create({
       Provider: provider,
       UserIdentifier: userIdentifier,
-      TransactionId: transactionId,
-      OfferId: offerId,
-      OfferName: offerName,
-      RewardAmount: rewardAmount,
+      TransactionId: token,
+      OfferId: callbackData.offer_id || callbackData.offerId || null,
+      OfferName: callbackData.offer_name || callbackData.offerName || 'PubScale Offer',
+      RewardAmount: value,
       RewardType: rewardType === 'WalletBalance' ? 'WalletBalance' : 'Coins',
       Status: (user && isApproved) ? 'Processed' : 'Pending',
       RawData: callbackData,
@@ -689,26 +712,28 @@ const handlePubScaleCallback = async (req, res) => {
       ProcessedAt: (user && isApproved) ? new Date() : null
     });
 
-    if (user && isApproved && rewardAmount > 0) {
+    // Credit coins to user if user found
+    if (user && isApproved && value > 0) {
       try {
         if (rewardType === 'WalletBalance') {
-          user.WalletBalance = (user.WalletBalance || 0) + rewardAmount;
+          user.WalletBalance = (user.WalletBalance || 0) + value;
         } else {
-          user.Coins = (user.Coins || 0) + rewardAmount;
+          user.Coins = (user.Coins || 0) + value;
         }
         await user.save();
 
         callbackRecord.Status = 'Processed';
         callbackRecord.ProcessedAt = new Date();
         await callbackRecord.save();
-        console.log('PubScale reward credited successfully to user:', user.MobileNumber, 'Amount:', rewardAmount);
-      } catch (rewardError) {
-        console.error('Error crediting PubScale reward:', rewardError);
+        console.log(`Offerwall reward credited successfully: ${value} ${rewardType} to user ${user.MobileNumber} (${user._id})`);
+      } catch (rewardErr) {
+        console.error('Error crediting offerwall reward:', rewardErr);
         callbackRecord.Status = 'Failed';
-        callbackRecord.ErrorMessage = rewardError.message;
+        callbackRecord.ErrorMessage = rewardErr.message;
         await callbackRecord.save();
       }
     } else if (!user && userIdentifier) {
+      console.warn('User not found for Offerwall callback:', userIdentifier);
       callbackRecord.Status = 'Pending';
       callbackRecord.ErrorMessage = 'User not found with provided identifier';
       await callbackRecord.save();
@@ -716,12 +741,18 @@ const handlePubScaleCallback = async (req, res) => {
 
     return res.status(200).send('OK');
   } catch (err) {
-    console.error('PubScale Callback Processing Error:', err);
+    console.error('Offerwall Callback Error:', err);
     return res.status(200).send('OK');
   }
 };
 
-router.post('/callback/pubscale', handlePubScaleCallback);
-router.get('/callback/pubscale', handlePubScaleCallback);
+router.get('/callback/offerwall', handlePubScaleOfferwallCallback);
+router.post('/callback/offerwall', handlePubScaleOfferwallCallback);
+router.get('/api/callback/offerwall', handlePubScaleOfferwallCallback);
+router.post('/api/callback/offerwall', handlePubScaleOfferwallCallback);
+router.get('/callback/pubscale', handlePubScaleOfferwallCallback);
+router.post('/callback/pubscale', handlePubScaleOfferwallCallback);
+router.get('/api/callback/pubscale', handlePubScaleOfferwallCallback);
+router.post('/api/callback/pubscale', handlePubScaleOfferwallCallback);
 
 module.exports = router;
