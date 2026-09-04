@@ -908,6 +908,24 @@ router.get('/refercode', verifyToken, async (req, res) => {
     const totalEarnings = referralCount * rewardPerReferral;
     const rewardType = referralSettings ? (referralSettings.RewardType || 'Coins') : 'Coins';
 
+    // Fetch referred users list
+    const referredUsers = await userModel.find({ ReferredBy: user.ReferCode })
+      .sort({ SignupTime: -1 })
+      .select('UserName MobileNumber SignupTime Coins WalletBalance IsBlocked');
+
+    const activeReferrals = referredUsers.filter(u => (u.Coins || 0) > 0 || (u.WalletBalance || 0) > 0).length;
+    const pendingReferrals = Math.max(0, referralCount - activeReferrals);
+
+    const formattedReferredUsers = referredUsers.map(ru => ({
+      _id: ru._id,
+      userName: ru.UserName,
+      mobileNumber: ru.MobileNumber ? ru.MobileNumber.replace(/^(\d{2})\d{5}(\d{3})$/, '$1*****$2') : 'N/A',
+      rawMobile: ru.MobileNumber,
+      signupTime: ru.SignupTime,
+      status: ((ru.Coins || 0) > 0 || (ru.WalletBalance || 0) > 0) ? 'Active' : 'Pending',
+      isBlocked: ru.IsBlocked || false
+    }));
+
     return res.json({
       message: "Refer code retrieved successfully",
       data: {
@@ -915,9 +933,12 @@ router.get('/refercode', verifyToken, async (req, res) => {
         ReferCode: user.ReferCode,
         MobileNumber: user.MobileNumber,
         ReferralCount: referralCount,
+        ActiveReferrals: activeReferrals,
+        PendingReferrals: pendingReferrals,
         TotalEarnings: totalEarnings,
         RewardType: rewardType,
-        RewardPerReferral: rewardPerReferral
+        RewardPerReferral: rewardPerReferral,
+        ReferredUsers: formattedReferredUsers
       }
     })
 
@@ -3664,3 +3685,62 @@ router.get('/support/link', async (req, res) => {
 })
 
 module.exports = router;
+
+
+// Get User Referred Friends API
+router.get('/referrals', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    let user = await userModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        message: "User Not Found"
+      });
+    }
+
+    if (!user.ReferCode) {
+      return res.json({
+        message: "No refer code found",
+        data: {
+          totalReferrals: 0,
+          activeReferrals: 0,
+          pendingReferrals: 0,
+          referrals: []
+        }
+      });
+    }
+
+    const referredUsers = await userModel.find({ ReferredBy: user.ReferCode })
+      .sort({ SignupTime: -1 })
+      .select('UserName MobileNumber SignupTime Coins WalletBalance IsBlocked');
+
+    const activeReferrals = referredUsers.filter(u => (u.Coins || 0) > 0 || (u.WalletBalance || 0) > 0).length;
+    const pendingReferrals = Math.max(0, referredUsers.length - activeReferrals);
+
+    const formattedReferrals = referredUsers.map(ru => ({
+      _id: ru._id,
+      userName: ru.UserName,
+      mobileNumber: ru.MobileNumber ? ru.MobileNumber.replace(/^(\d{2})\d{5}(\d{3})$/, '$1*****$2') : 'N/A',
+      rawMobile: ru.MobileNumber,
+      signupTime: ru.SignupTime,
+      status: ((ru.Coins || 0) > 0 || (ru.WalletBalance || 0) > 0) ? 'Active' : 'Pending',
+      isBlocked: ru.IsBlocked || false
+    }));
+
+    return res.json({
+      message: "Referral list retrieved successfully",
+      data: {
+        totalReferrals: referredUsers.length,
+        activeReferrals: activeReferrals,
+        pendingReferrals: pendingReferrals,
+        referrals: formattedReferrals
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({
+      message: "Internal Server Error",
+      error: err.message
+    });
+  }
+});

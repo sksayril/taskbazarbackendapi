@@ -626,4 +626,102 @@ router.get('/callback/offerwall', async (req, res) => {
   }
 })
 
+
+
+// PubScale Offerwall Callback API (POST & GET)
+// Endpoint: /api/callback/pubscale
+const handlePubScaleCallback = async (req, res) => {
+  try {
+    const callbackData = { ...req.query, ...req.body };
+    console.log('PubScale Offerwall Callback Received:', {
+      timestamp: new Date().toISOString(),
+      data: callbackData,
+      headers: req.headers
+    });
+
+    const provider = 'PubScale';
+    const transactionId = callbackData.tx_id || callbackData.transaction_id || callbackData.transactionId || callbackData.tid || callbackData.id || null;
+    const offerId = callbackData.offer_id || callbackData.offerId || callbackData.campaign_id || null;
+    const offerName = callbackData.offer_name || callbackData.offerName || callbackData.campaign_name || 'PubScale Offer';
+    
+    const userIdentifier = callbackData.user_id || callbackData.userId || callbackData.subid || callbackData.sub_id || callbackData.app_user_id || null;
+    const rewardAmount = parseFloat(callbackData.reward || callbackData.amount || callbackData.payout || callbackData.currency || 0);
+    const rewardType = callbackData.reward_type || callbackData.rewardType || 'Coins';
+
+    const statusParam = (callbackData.status || callbackData.event || 'complete').toString().toLowerCase();
+    const isApproved = statusParam === 'complete' || statusParam === 'completed' || statusParam === 'approved' || statusParam === 'success' || statusParam === '1' || statusParam === 'true';
+
+    // Duplicate transaction check
+    if (transactionId) {
+      const existing = await offerwallCallbackModel.findOne({
+        TransactionId: transactionId,
+        Provider: provider
+      });
+      if (existing) {
+        console.log('PubScale duplicate callback ignored:', transactionId);
+        return res.status(200).send('OK');
+      }
+    }
+
+    let user = null;
+    let userId = null;
+    if (userIdentifier) {
+      user = await userModel.findOne({ MobileNumber: userIdentifier.trim() });
+      if (!user && mongoose.Types.ObjectId.isValid(userIdentifier.trim())) {
+        user = await userModel.findById(userIdentifier.trim());
+      }
+      if (user) {
+        userId = user._id;
+      }
+    }
+
+    const callbackRecord = await offerwallCallbackModel.create({
+      Provider: provider,
+      UserIdentifier: userIdentifier,
+      TransactionId: transactionId,
+      OfferId: offerId,
+      OfferName: offerName,
+      RewardAmount: rewardAmount,
+      RewardType: rewardType === 'WalletBalance' ? 'WalletBalance' : 'Coins',
+      Status: (user && isApproved) ? 'Processed' : 'Pending',
+      RawData: callbackData,
+      UserId: userId,
+      ProcessedAt: (user && isApproved) ? new Date() : null
+    });
+
+    if (user && isApproved && rewardAmount > 0) {
+      try {
+        if (rewardType === 'WalletBalance') {
+          user.WalletBalance = (user.WalletBalance || 0) + rewardAmount;
+        } else {
+          user.Coins = (user.Coins || 0) + rewardAmount;
+        }
+        await user.save();
+
+        callbackRecord.Status = 'Processed';
+        callbackRecord.ProcessedAt = new Date();
+        await callbackRecord.save();
+        console.log('PubScale reward credited successfully to user:', user.MobileNumber, 'Amount:', rewardAmount);
+      } catch (rewardError) {
+        console.error('Error crediting PubScale reward:', rewardError);
+        callbackRecord.Status = 'Failed';
+        callbackRecord.ErrorMessage = rewardError.message;
+        await callbackRecord.save();
+      }
+    } else if (!user && userIdentifier) {
+      callbackRecord.Status = 'Pending';
+      callbackRecord.ErrorMessage = 'User not found with provided identifier';
+      await callbackRecord.save();
+    }
+
+    return res.status(200).send('OK');
+  } catch (err) {
+    console.error('PubScale Callback Processing Error:', err);
+    return res.status(200).send('OK');
+  }
+};
+
+router.post('/callback/pubscale', handlePubScaleCallback);
+router.get('/callback/pubscale', handlePubScaleCallback);
+
 module.exports = router;
