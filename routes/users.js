@@ -937,6 +937,7 @@ router.get('/refercode', verifyToken, async (req, res) => {
         PendingReferrals: pendingReferrals,
         TotalEarnings: totalEarnings,
         RewardType: rewardType,
+        RewardForNewUser: referralSettings ? (referralSettings.RewardForNewUser || 0) : 0,
         RewardPerReferral: rewardPerReferral,
         ReferredUsers: formattedReferredUsers
       }
