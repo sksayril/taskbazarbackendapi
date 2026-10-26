@@ -1,3 +1,4 @@
+const https = require('https');
 var express = require('express');
 var router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -24,6 +25,9 @@ const upload = multer({
 });
 // test
 
+let otpModel = require('../models/otp.model')
+let coinTransactionModel = require('../models/coinTransaction.model')
+let offerwallCallbackModel = require('../models/offerwallCallback.model')
 let userModel = require('../models/user.model')
 let captchaSettingsModel = require('../models/captchaSettings.model')
 let captchaSolveModel = require('../models/captchaSolve.model')
@@ -121,6 +125,145 @@ function generateReferCode() {
 }
 
 // User Signup API
+
+// ==================== OTP VERIFICATION APIs ====================
+
+
+const APITXT_AUTH_KEY = process.env.APITXT_AUTH_KEY || 'FXRj5tiFpJNQbfDmUMOZRLMy5jLlJhj8-ULs2pHxPGg';
+
+function sendSmsOtp(mobile, otp) {
+  return new Promise((resolve) => {
+    try {
+      const clean = String(mobile).replace(/\D/g, '');
+      const formatted = clean.startsWith('91') && clean.length === 12
+        ? clean
+        : (clean.length === 10 ? '91' + clean : clean);
+
+      const url = 'https://apitxt.com/api/sendOTP?authkey=' + encodeURIComponent(APITXT_AUTH_KEY) +
+        '&mobile=' + encodeURIComponent(formatted) +
+        '&otp=' + encodeURIComponent(otp) +
+        '&channel=sms&country=91';
+
+      const req = https.get(url, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            console.log('[SMS_SERVICE] apitxt response for ' + formatted + ':', parsed);
+            resolve({ success: res.statusCode === 200 && parsed.status === 'success', data: parsed });
+          } catch (e) {
+            console.warn('[SMS_SERVICE] raw response:', body);
+            resolve({ success: false, error: body });
+          }
+        });
+      });
+
+      req.on('error', (err) => {
+        console.error('[SMS_SERVICE] HTTP error:', err.message);
+        resolve({ success: false, error: err.message });
+      });
+
+      req.setTimeout(8000, () => {
+        req.destroy();
+        resolve({ success: false, error: 'timeout' });
+      });
+    } catch (err) {
+      console.error('[SMS_SERVICE] Exception:', err.message);
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+// Send OTP API
+router.post('/otp/send', async (req, res) => {
+  try {
+    const { MobileNumber } = req.body;
+    if (!MobileNumber || typeof MobileNumber !== 'string' || MobileNumber.trim().length !== 10) {
+      return res.status(400).json({
+        message: 'A valid 10-digit mobile number is required'
+      });
+    }
+
+    const cleanMobile = MobileNumber.trim();
+    // Generate 6-digit numeric OTP
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store in DB
+    await otpModel.deleteMany({ MobileNumber: cleanMobile });
+    await otpModel.create({
+      MobileNumber: cleanMobile,
+      Otp: generatedOtp,
+      ExpiresAt: expiresAt,
+      IsVerified: false
+    });
+
+    // Send real SMS OTP via apitxt Unified OTP API
+    const smsResult = await sendSmsOtp(cleanMobile, generatedOtp);
+    console.log('[OTP_SERVICE] OTP for ' + cleanMobile + ': ' + generatedOtp + ' | SMS Sent: ' + smsResult.success);
+
+    return res.json({
+      message: 'OTP sent successfully to your mobile number',
+      data: {
+        mobileNumber: cleanMobile,
+        expiresAt: expiresAt,
+        // In development/testing, also return OTP for immediate testing
+        otp: generatedOtp
+      }
+    });
+  } catch (err) {
+    console.error('Send OTP Error:', err);
+    return res.status(500).json({ message: 'Failed to send OTP. Please try again.' });
+  }
+});
+
+// Verify OTP API
+router.post('/otp/verify', async (req, res) => {
+  try {
+    const { MobileNumber, Otp } = req.body;
+    if (!MobileNumber || !Otp) {
+      return res.status(400).json({ message: 'Mobile number and OTP are required' });
+    }
+
+    const cleanMobile = MobileNumber.trim();
+    const cleanOtp = String(Otp).trim();
+
+    // Verify OTP record
+    const record = await otpModel.findOne({
+      MobileNumber: cleanMobile,
+      Otp: cleanOtp,
+      ExpiresAt: { $gt: new Date() }
+    });
+
+    // Accept master OTP 123456 as backup for testing
+    const isMasterOtp = cleanOtp === '123456';
+
+    if (!record && !isMasterOtp) {
+      return res.status(400).json({ message: 'Invalid or expired OTP. Please check and try again.' });
+    }
+
+    if (record) {
+      record.IsVerified = true;
+      await record.save();
+    }
+
+    // If user document already exists, mark as verified
+    await userModel.updateOne(
+      { MobileNumber: cleanMobile },
+      { $set: { IsVerified: true, VerifiedAt: new Date() } }
+    );
+
+    return res.json({
+      message: 'OTP verified successfully',
+      data: { mobileNumber: cleanMobile, isVerified: true }
+    });
+  } catch (err) {
+    console.error('Verify OTP Error:', err);
+    return res.status(500).json({ message: 'Failed to verify OTP' });
+  }
+});
+
 router.post('/signup', async (req, res) => {
   try {
     let { UserName, MobileNumber, Password, DeviceId, ReferralCode } = req.body
@@ -338,7 +481,9 @@ router.post('/signup', async (req, res) => {
         ReferredBy: referredBy,
         Coins: initialCoins,
         WalletBalance: initialWalletBalance,
-        SignupTime: new Date()
+        SignupTime: new Date(),
+        IsVerified: true,
+        VerifiedAt: new Date()
       }
       
       User_data = await userModel.create(userDataToCreate)
@@ -1552,7 +1697,7 @@ router.post('/withdrawal/request', verifyToken, async (req, res) => {
       })
     }
 
-    const { Amount, PaymentMethod, UPIId, VirtualId, BankAccountNumber, BankIFSC, BankName, AccountHolderName } = req.body
+    const { Amount, PaymentMethod, UPIId, VirtualId, BankAccountNumber, BankIFSC, BankName, AccountHolderName, QRCodeImage, PaymentProof } = req.body
 
     // Get withdrawal settings
     let withdrawalSettings = await withdrawalSettingsModel.getSettings()
@@ -1678,6 +1823,8 @@ router.get('/withdrawal/requests', verifyToken, async (req, res) => {
       virtualId: req.VirtualId,
       bankAccountNumber: req.BankAccountNumber ? req.BankAccountNumber.replace(/\d(?=\d{4})/g, "*") : null, // Mask account number
       bankIFSC: req.BankIFSC,
+      qrCodeImage: req.QRCodeImage,
+      paymentProof: req.PaymentProof,
       bankName: req.BankName,
       accountHolderName: req.AccountHolderName,
       status: req.Status,
@@ -3612,6 +3759,9 @@ router.get('/popup-template/public', async (req, res) => {
           isActive: false,
           title: null,
           description: null,
+          minRequiredBuildNumber: settings ? (settings.MinRequiredBuildNumber || 0) : 0,
+          latestVersion: settings ? (settings.LatestVersion || "3.0.4") : "3.0.4",
+          forceUpdate: settings ? (settings.ForceUpdate || false) : false,
           note: !settings
             ? "Popup is not configured"
             : !settings.IsActive
@@ -3628,7 +3778,10 @@ router.get('/popup-template/public', async (req, res) => {
         title: settings.Title && String(settings.Title).trim()
           ? String(settings.Title).trim()
           : null,
-        description: description ? description : null
+        description: description ? description : null,
+        minRequiredBuildNumber: settings.MinRequiredBuildNumber || 0,
+        latestVersion: settings.LatestVersion || "3.0.4",
+        forceUpdate: settings.ForceUpdate || false
       }
     })
   } catch (err) {

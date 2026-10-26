@@ -19,6 +19,9 @@ let referralSettingsModel = require('../models/referralSettings.model')
 let dailyBonusSettingsModel = require('../models/dailyBonusSettings.model')
 let dailySpinSettingsModel = require('../models/dailySpinSettings.model')
 let withdrawalRequestModel = require('../models/withdrawalRequest.model')
+let offerwallCallbackModel = require('../models/offerwallCallback.model')
+let dailySpinUsageModel = require('../models/dailySpinUsage.model')
+let coinTransactionModel = require('../models/coinTransaction.model')
 let userModel = require('../models/user.model')
 let appModel = require('../models/app.model')
 let appInstallationSubmissionModel = require('../models/appInstallationSubmission.model')
@@ -40,6 +43,117 @@ let socialLinksSettingsModel = require('../models/socialLinksSettings.model')
 let taskControlSettingsModel = require('../models/taskControlSettings.model')
 let adsManagementSettingsModel = require('../models/adsManagementSettings.model')
 let popupTemplateSettingsModel = require('../models/popupTemplateSettings.model')
+
+
+async function getUserEarningBreakdown(userId) {
+  try {
+    const user = await userModel.findById(userId);
+    if (!user) return null;
+
+    // 1. Task Completion (Approved App Installations)
+    const approvedTasks = await appInstallationSubmissionModel.find({
+      UserId: userId,
+      Status: 'Approved'
+    }).populate('AppId', 'RewardCoins AppName');
+    const taskCompletionCoins = approvedTasks.reduce((sum, s) => sum + (s.AppId?.RewardCoins || 0), 0);
+    const taskCount = approvedTasks.length;
+
+    // 2. Referrals
+    const referredUsersCount = await userModel.countDocuments({ ReferredBy: user.ReferCode });
+    const referralTx = await coinTransactionModel.find({ UserId: userId, Source: 'Referral' });
+    const referralCoins = referralTx.reduce((sum, tx) => sum + (tx.Coins || 0), 0);
+
+    // 3. Offerwall
+    const offerwallCallbacks = await offerwallCallbackModel.find({
+      $or: [{ UserId: userId }, { UserIdentifier: user.MobileNumber }]
+    });
+    const offerwallCoins = offerwallCallbacks
+      .filter(c => c.Status === 'Processed')
+      .reduce((sum, c) => sum + (c.RewardAmount || 0), 0);
+    const offerwallCount = offerwallCallbacks.filter(c => c.Status === 'Processed').length;
+
+    // 4. Scratch Card
+    const scratchDailyClaims = await scratchCardDailyLimitClaimModel.find({ UserId: userId });
+    const scratchRegularClaims = await scratchCardClaimModel.find({ UserId: userId });
+    const scratchCardCoins =
+      scratchDailyClaims.reduce((sum, c) => sum + (c.RewardCoins || 0), 0) +
+      scratchRegularClaims.reduce((sum, c) => sum + (c.RewardCoins || 0), 0);
+    const scratchCardCount = scratchDailyClaims.length + scratchRegularClaims.length;
+
+    // 5. Spin & Win
+    const spinUsages = await dailySpinUsageModel.find({ UserId: userId });
+    const spinTx = await coinTransactionModel.find({ UserId: userId, Source: 'SpinWheel' });
+    const spinWheelCoins = spinTx.reduce((sum, tx) => sum + (tx.Coins || 0), 0);
+    const spinWheelCount = spinUsages.reduce((sum, u) => sum + (u.SpinCount || 1), 0);
+
+    // 6. Daily Bonus
+    const dailyBonusClaims = await dailyBonusClaimModel.find({ UserId: userId });
+    const dailyBonusCoins = dailyBonusClaims.reduce((sum, c) => sum + (c.BonusCoins || 0), 0);
+    const dailyBonusCount = dailyBonusClaims.length;
+
+    // 7. Captcha
+    const captchaSolves = await captchaSolveModel.find({ UserId: userId, Status: 'Approved' });
+    const captchaCoins = captchaSolves.reduce((sum, c) => sum + (c.RewardCoins || 0), 0);
+    const captchaCount = captchaSolves.length;
+
+    // 8. Redeemed Coins (Conversions)
+    const conversions = await coinConversionHistoryModel.find({ UserId: userId });
+    const redeemedCoins = conversions.reduce((sum, c) => sum + (c.CoinsConverted || 0), 0);
+    const convertedAmount = conversions.reduce((sum, c) => sum + (c.AmountAdded || 0), 0);
+
+    // 9. Total Earned Coins
+    const totalEarnedCoins = taskCompletionCoins + referralCoins + offerwallCoins + scratchCardCoins + spinWheelCoins + dailyBonusCoins + captchaCoins;
+
+    // 10. Withdrawals Summary
+    const withdrawals = await withdrawalRequestModel.find({ UserId: userId }).sort({ createdAt: -1 });
+    const totalWithdrawn = withdrawals
+      .filter(w => w.Status === 'Approved')
+      .reduce((sum, w) => sum + (w.Amount || 0), 0);
+
+    // 11. Recent Transactions
+    const recentTransactions = await coinTransactionModel.find({ UserId: userId })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    return {
+      currentCoins: user.Coins || 0,
+      currentWalletBalance: user.WalletBalance || 0,
+      totalEarnedCoins: Math.max(totalEarnedCoins, user.Coins || 0),
+      redeemedCoins: redeemedCoins,
+      convertedAmount: convertedAmount,
+      totalWithdrawn: totalWithdrawn,
+      isVerified: user.IsVerified || false,
+      verifiedAt: user.VerifiedAt || null,
+      sources: {
+        taskCompletion: { count: taskCount, coins: taskCompletionCoins },
+        referral: { count: referredUsersCount, coins: referralCoins },
+        offerwall: { count: offerwallCount, coins: offerwallCoins },
+        scratchCard: { count: scratchCardCount, coins: scratchCardCoins },
+        spinWheel: { count: spinWheelCount, coins: spinWheelCoins },
+        dailyBonus: { count: dailyBonusCount, coins: dailyBonusCoins },
+        captcha: { count: captchaCount, coins: captchaCoins }
+      },
+      withdrawalsSummary: {
+        total: withdrawals.length,
+        pending: withdrawals.filter(w => w.Status === 'Pending').length,
+        approved: withdrawals.filter(w => w.Status === 'Approved').length,
+        rejected: withdrawals.filter(w => w.Status === 'Rejected').length
+      },
+      recentTransactions: recentTransactions.map(tx => ({
+        id: tx._id,
+        type: tx.Type,
+        source: tx.Source,
+        coins: tx.Coins,
+        balanceAfter: tx.BalanceAfter,
+        description: tx.Description,
+        date: tx.createdAt
+      }))
+    };
+  } catch (err) {
+    console.error('getUserEarningBreakdown Error:', err);
+    return null;
+  }
+}
 
 function popupDescriptionFromDoc(doc) {
   if (!doc) return ''
@@ -542,15 +656,29 @@ router.get('/withdrawal/requests', verifyToken, async (req, res) => {
 
     // Get all withdrawal requests
     const requests = await withdrawalRequestModel.find(query)
-      .populate('UserId', 'MobileNumber DeviceId')
+      .populate('UserId', 'UserName MobileNumber DeviceId IsVerified VerifiedAt Coins WalletBalance ReferCode SignupTime createdAt')
       .sort({ createdAt: -1 })
 
     // Format response
+    // Pre-fetch earning breakdowns for all unique users in these requests
+    const uniqueUserIds = [...new Set(requests.map(r => r.UserId?._id).filter(Boolean))];
+    const breakdownMap = {};
+    for (const uid of uniqueUserIds) {
+      breakdownMap[String(uid)] = await getUserEarningBreakdown(uid);
+    }
+
     const formattedRequests = requests.map(req => ({
       requestId: req._id,
       userId: req.UserId._id,
       userMobileNumber: req.UserId.MobileNumber,
-      userDeviceId: req.UserId.DeviceId,
+      userDeviceId: req.UserId?.DeviceId,
+      isVerified: req.UserId?.IsVerified || false,
+      verifiedAt: req.UserId?.VerifiedAt || null,
+      userCoins: req.UserId?.Coins || 0,
+      userWalletBalance: req.UserId?.WalletBalance || 0,
+      qrCodeImage: req.QRCodeImage || null,
+      paymentProof: req.PaymentProof || null,
+      earningBreakdown: breakdownMap[String(req.UserId?._id)] || null,
       amount: req.Amount,
       paymentMethod: req.PaymentMethod,
       upiId: req.UPIId,
@@ -1337,6 +1465,9 @@ router.get('/users/:userId', verifyToken, async (req, res) => {
       isBlocked: user.IsBlocked || false,
       blockedAt: user.BlockedAt || null,
       blockedReason: user.BlockedReason || null,
+      isVerified: user.IsVerified || false,
+      verifiedAt: user.VerifiedAt || null,
+      earningBreakdown: earningBreakdown,
       signupTime: user.SignupTime,
       lastLoginTime: user.LastLoginTime,
       createdAt: user.createdAt,
@@ -4154,6 +4285,9 @@ router.get('/popup-template', verifyAdminToken, async (req, res) => {
         Title: settings.Title,
         Description: popupDescriptionFromDoc(settings),
         IsActive: settings.IsActive,
+          MinRequiredBuildNumber: settings.MinRequiredBuildNumber || 0,
+          LatestVersion: settings.LatestVersion || '3.0.4',
+          ForceUpdate: settings.ForceUpdate || false,
         createdAt: settings.createdAt,
         updatedAt: settings.updatedAt
       }
@@ -4187,6 +4321,9 @@ router.post('/popup-template', verifyAdminToken, parseMultipartTextFieldsOnly, a
         settings.Description = String(descInput)
         settings.Body = ''
       }
+      if (req.body.MinRequiredBuildNumber !== undefined) settings.MinRequiredBuildNumber = Number(req.body.MinRequiredBuildNumber) || 0;
+      if (req.body.LatestVersion !== undefined) settings.LatestVersion = String(req.body.LatestVersion);
+      if (req.body.ForceUpdate !== undefined) settings.ForceUpdate = req.body.ForceUpdate === true || req.body.ForceUpdate === 'true';
       if (req.body.IsActive !== undefined) {
         settings.IsActive = req.body.IsActive === true || req.body.IsActive === 'true'
       }

@@ -56,6 +56,14 @@ let schema = new mongoose.Schema({
     BlockedReason: {
         type: String,
         default: null
+    },
+    IsVerified: {
+        type: Boolean,
+        default: false
+    },
+    VerifiedAt: {
+        type: Date,
+        default: null
     }
 })
 

@@ -1,4 +1,4 @@
-let mongoose = require('mongoose')
+﻿let mongoose = require('mongoose')
 
 let schema = new mongoose.Schema({
   Title: {
@@ -19,6 +19,18 @@ let schema = new mongoose.Schema({
     trim: true
   },
   IsActive: {
+    type: Boolean,
+    default: false
+  },
+  MinRequiredBuildNumber: {
+    type: Number,
+    default: 0
+  },
+  LatestVersion: {
+    type: String,
+    default: '3.0.4'
+  },
+  ForceUpdate: {
     type: Boolean,
     default: false
   }
