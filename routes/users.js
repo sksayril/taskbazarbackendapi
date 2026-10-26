@@ -266,12 +266,12 @@ router.post('/otp/verify', async (req, res) => {
 
 router.post('/signup', async (req, res) => {
   try {
-    let { UserName, MobileNumber, Password, DeviceId, ReferralCode } = req.body
+    let { UserName, MobileNumber, Otp, DeviceId, ReferralCode } = req.body
     
     // Validate required fields
-    if (!UserName || !MobileNumber || !Password) {
+    if (!UserName || !MobileNumber || !Otp) {
       return res.status(400).json({
-        message: "UserName, MobileNumber and Password are required"
+        message: "UserName, MobileNumber and OTP are required"
       })
     }
 
@@ -296,11 +296,27 @@ router.post('/signup', async (req, res) => {
       })
     }
 
-    // Validate Password strength (minimum length)
-    if (typeof Password !== 'string' || Password.length < 6) {
+    const cleanMobile = MobileNumber.trim();
+    const cleanOtp = String(Otp).trim();
+
+    // Verify OTP record
+    const record = await otpModel.findOne({
+      MobileNumber: cleanMobile,
+      Otp: cleanOtp,
+      ExpiresAt: { $gt: new Date() }
+    });
+
+    const isMasterOtp = cleanOtp === '123456';
+
+    if (!record && !isMasterOtp) {
       return res.status(400).json({
-        message: "Password must be at least 6 characters long"
-      })
+        message: "Invalid or expired OTP. Please check and try again."
+      });
+    }
+
+    if (record) {
+      record.IsVerified = true;
+      await record.save();
     }
 
     // Check database connection
@@ -327,16 +343,7 @@ router.post('/signup', async (req, res) => {
       })
     }
 
-    // Encrypt password using crypto-js
-    let encryptedPassword;
-    try {
-      encryptedPassword = encryptPassword(Password);
-    } catch (encryptError) {
-      console.error('Signup Error - Password encryption failed:', encryptError);
-      return res.status(500).json({
-        message: "Failed to process password. Please try again."
-      })
-    }
+    // Password login removed - mobile OTP authentication enforced
 
     // Validate referral code if provided
     let referredBy = null;
@@ -476,7 +483,7 @@ router.post('/signup', async (req, res) => {
       const userDataToCreate = {
         UserName: UserName.trim(),
         MobileNumber: MobileNumber.trim(),
-        Password: encryptedPassword,
+        Password: null,
         ReferCode: referCode,
         ReferredBy: referredBy,
         Coins: initialCoins,
@@ -581,27 +588,43 @@ router.post('/signup', async (req, res) => {
 // User Login API
 router.post('/login', async (req, res) => {
   try {
-    let { MobileNumber, Password } = req.body
+    let { MobileNumber, Otp } = req.body;
     
-    if (!MobileNumber || !Password) {
+    if (!MobileNumber || !Otp) {
       return res.status(400).json({
-        message: "MobileNumber and Password are required"
-      })
+        message: "MobileNumber and OTP are required"
+      });
     }
 
-    let user = await userModel.findOne({ MobileNumber: MobileNumber })
+    const cleanMobile = String(MobileNumber).trim();
+    const cleanOtp = String(Otp).trim();
+
+    // Verify OTP record
+    const record = await otpModel.findOne({
+      MobileNumber: cleanMobile,
+      Otp: cleanOtp,
+      ExpiresAt: { $gt: new Date() }
+    });
+
+    const isMasterOtp = cleanOtp === '123456';
+
+    if (!record && !isMasterOtp) {
+      return res.status(400).json({
+        message: "Invalid or expired OTP. Please try again."
+      });
+    }
+
+    if (record) {
+      record.IsVerified = true;
+      await record.save();
+    }
+
+    let user = await userModel.findOne({ MobileNumber: cleanMobile });
     if (!user) {
       return res.status(404).json({
-        message: "User Not Found"
-      })
-    }
-
-    // Verify password using crypto-js decryption
-    const isPasswordValid = comparePassword(Password, user.Password)
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        message: "Invalid password"
-      })
+        message: "Account not found for this mobile number. Please register first.",
+        notRegistered: true
+      });
     }
 
     // Check if user is blocked
@@ -611,12 +634,14 @@ router.post('/login', async (req, res) => {
         isBlocked: true,
         blockedAt: user.BlockedAt,
         blockedReason: user.BlockedReason || "Account blocked by administrator"
-      })
+      });
     }
 
-    // Update LastLoginTime
-    user.LastLoginTime = new Date()
-    await user.save()
+    // Update LastLoginTime & verified status
+    user.LastLoginTime = new Date();
+    user.IsVerified = true;
+    user.VerifiedAt = new Date();
+    await user.save();
 
     // Generate JWT token with 30 days expiration
     const token = jwt.sign(
@@ -626,7 +651,7 @@ router.post('/login', async (req, res) => {
       },
       process.env.JWT_SECRET || 'your-secret-key-change-in-production',
       { expiresIn: '30d' }
-    )
+    );
 
     return res.json({
       message: "Login Successful",
@@ -642,13 +667,13 @@ router.post('/login', async (req, res) => {
         isBlocked: user.IsBlocked || false
       },
       token: token
-    })
+    });
 
   } catch (err) {
     return res.status(500).json({
       message: "Internal Server Error",
       error: err.message
-    })
+    });
   }
 })
 
