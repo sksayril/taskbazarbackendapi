@@ -644,72 +644,140 @@ router.get('/dailyspin/settings', verifyAdminToken, async (req, res) => {
   }
 })
 
-// Get All Withdrawal Requests API
+// Get All Withdrawal Requests API (with Pagination, Search & Fast Parallel Breakdown)
 router.get('/withdrawal/requests', verifyToken, async (req, res) => {
   try {
-    const { status } = req.query // Optional filter by status
+    const { status, page = 1, limit = 20, search } = req.query;
     
-    let query = {}
+    let query = {};
     if (status && ['Pending', 'Approved', 'Rejected'].includes(status)) {
-      query.Status = status
+      query.Status = status;
     }
 
-    // Get all withdrawal requests
+    if (search && search.trim()) {
+      const searchTrimmed = search.trim();
+      const searchRegex = { $regex: searchTrimmed, $options: 'i' };
+
+      // Search matching users by MobileNumber, DeviceId, or UserName
+      const matchedUsers = await userModel.find({
+        $or: [
+          { MobileNumber: searchRegex },
+          { DeviceId: searchRegex },
+          { UserName: searchRegex }
+        ]
+      }).select('_id');
+      const matchedUserIds = matchedUsers.map(u => u._id);
+
+      const orConditions = [
+        { UPIId: searchRegex },
+        { VirtualId: searchRegex },
+        { BankAccountNumber: searchRegex },
+        { BankIFSC: searchRegex },
+        { AccountHolderName: searchRegex }
+      ];
+
+      if (matchedUserIds.length > 0) {
+        orConditions.push({ UserId: { $in: matchedUserIds } });
+      }
+
+      if (/^[0-9a-fA-F]{24}$/.test(searchTrimmed)) {
+        orConditions.push({ _id: searchTrimmed });
+        orConditions.push({ UserId: searchTrimmed });
+      }
+
+      query.$or = orConditions;
+    }
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, Math.min(100, parseInt(limit) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Parallel counts: global stats and current filtered total
+    const [totalRequestsCount, pendingCount, approvedCount, rejectedCount, totalMatchingRequests] = await Promise.all([
+      withdrawalRequestModel.countDocuments({}),
+      withdrawalRequestModel.countDocuments({ Status: 'Pending' }),
+      withdrawalRequestModel.countDocuments({ Status: 'Approved' }),
+      withdrawalRequestModel.countDocuments({ Status: 'Rejected' }),
+      withdrawalRequestModel.countDocuments(query)
+    ]);
+
+    // Fetch paginated requests
     const requests = await withdrawalRequestModel.find(query)
       .populate('UserId', 'UserName MobileNumber DeviceId IsVerified VerifiedAt Coins WalletBalance ReferCode SignupTime createdAt')
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
 
-    // Format response
-    // Pre-fetch earning breakdowns for all unique users in these requests
+    // Pre-fetch earning breakdowns in PARALLEL for current page items only
     const uniqueUserIds = [...new Set(requests.map(r => r.UserId?._id).filter(Boolean))];
-    const breakdownMap = {};
-    for (const uid of uniqueUserIds) {
-      breakdownMap[String(uid)] = await getUserEarningBreakdown(uid);
-    }
+    const breakdownEntries = await Promise.all(
+      uniqueUserIds.map(async (uid) => {
+        try {
+          const breakdown = await getUserEarningBreakdown(uid);
+          return [String(uid), breakdown];
+        } catch (e) {
+          return [String(uid), null];
+        }
+      })
+    );
+    const breakdownMap = Object.fromEntries(breakdownEntries);
 
-    const formattedRequests = requests.map(req => ({
-      requestId: req._id,
-      userId: req.UserId._id,
-      userMobileNumber: req.UserId.MobileNumber,
-      userDeviceId: req.UserId?.DeviceId,
-      isVerified: req.UserId?.IsVerified || false,
-      verifiedAt: req.UserId?.VerifiedAt || null,
-      userCoins: req.UserId?.Coins || 0,
-      userWalletBalance: req.UserId?.WalletBalance || 0,
-      qrCodeImage: req.QRCodeImage || null,
-      paymentProof: req.PaymentProof || null,
-      earningBreakdown: breakdownMap[String(req.UserId?._id)] || null,
-      amount: req.Amount,
-      paymentMethod: req.PaymentMethod,
-      upiId: req.UPIId,
-      virtualId: req.VirtualId,
-      bankAccountNumber: req.BankAccountNumber,
-      bankIFSC: req.BankIFSC,
-      bankName: req.BankName,
-      accountHolderName: req.AccountHolderName,
-      status: req.Status,
-      adminNotes: req.AdminNotes,
-      createdAt: req.createdAt,
-      updatedAt: req.updatedAt
-    }))
+    const formattedRequests = requests.map(reqItem => ({
+      requestId: reqItem._id,
+      userId: reqItem.UserId?._id || 'N/A',
+      userName: reqItem.UserId?.UserName || null,
+      userMobileNumber: reqItem.UserId?.MobileNumber || 'N/A',
+      userDeviceId: reqItem.UserId?.DeviceId || 'N/A',
+      userReferCode: reqItem.UserId?.ReferCode || null,
+      userSignupTime: reqItem.UserId?.SignupTime || null,
+      isVerified: reqItem.UserId?.IsVerified || false,
+      verifiedAt: reqItem.UserId?.VerifiedAt || null,
+      userCoins: reqItem.UserId?.Coins || 0,
+      userWalletBalance: reqItem.UserId?.WalletBalance || 0,
+      qrCodeImage: reqItem.QRCodeImage || null,
+      paymentProof: reqItem.PaymentProof || null,
+      earningBreakdown: breakdownMap[String(reqItem.UserId?._id)] || null,
+      amount: reqItem.Amount,
+      paymentMethod: reqItem.PaymentMethod,
+      upiId: reqItem.UPIId,
+      virtualId: reqItem.VirtualId,
+      bankAccountNumber: reqItem.BankAccountNumber,
+      bankIFSC: reqItem.BankIFSC,
+      bankName: reqItem.BankName,
+      accountHolderName: reqItem.AccountHolderName,
+      status: reqItem.Status,
+      adminNotes: reqItem.AdminNotes,
+      createdAt: reqItem.createdAt,
+      updatedAt: reqItem.updatedAt
+    }));
+
+    const totalPages = Math.ceil(totalMatchingRequests / limitNum) || 1;
 
     return res.json({
       message: "Withdrawal requests retrieved successfully",
       data: {
         requests: formattedRequests,
-        totalRequests: formattedRequests.length,
-        pendingCount: formattedRequests.filter(r => r.status === 'Pending').length,
-        approvedCount: formattedRequests.filter(r => r.status === 'Approved').length,
-        rejectedCount: formattedRequests.filter(r => r.status === 'Rejected').length
+        pagination: {
+          currentPage: pageNum,
+          totalPages: totalPages,
+          totalRequests: totalMatchingRequests,
+          limit: limitNum,
+          hasNextPage: pageNum < totalPages,
+          hasPrevPage: pageNum > 1
+        },
+        totalRequests: totalRequestsCount,
+        pendingCount: pendingCount,
+        approvedCount: approvedCount,
+        rejectedCount: rejectedCount
       }
-    })
+    });
 
   } catch (err) {
-    console.error('Get Withdrawal Requests - Error:', err)
+    console.error('Get Withdrawal Requests - Error:', err);
     return res.status(500).json({
       message: "Internal Server Error",
       error: err.message
-    })
+    });
   }
 })
 
