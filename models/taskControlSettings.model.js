@@ -3,7 +3,7 @@ let mongoose = require('mongoose')
 let schema = new mongoose.Schema({
     TaskType: {
         type: String,
-        enum: ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz'],
+        enum: ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz', 'PlayGame'],
         required: true,
         unique: true
     },

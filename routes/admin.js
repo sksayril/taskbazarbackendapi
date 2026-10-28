@@ -162,7 +162,7 @@ function popupDescriptionFromDoc(doc) {
   return doc.Body != null ? String(doc.Body).trim() : ''
 }
 
-const CONTROLLED_TASK_TYPES = ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz']
+const CONTROLLED_TASK_TYPES = ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz', 'PlayGame']
 
 function getStartOfToday() {
   const date = new Date()

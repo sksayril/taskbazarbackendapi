@@ -1,6 +1,6 @@
 let mongoose = require('mongoose')
 
-const TASK_TYPES = ['Quiz', 'Captcha', 'DailySpin', 'ScratchCard', 'ScratchCardDailyLimit', 'AppInstall']
+const TASK_TYPES = ['Quiz', 'Captcha', 'DailySpin', 'ScratchCard', 'ScratchCardDailyLimit', 'AppInstall', 'PlayGame']
 
 const taskAdRuleSchema = new mongoose.Schema({
     TaskType: {

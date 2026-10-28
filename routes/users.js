@@ -55,7 +55,7 @@ let taskControlSettingsModel = require('../models/taskControlSettings.model')
 let adsManagementSettingsModel = require('../models/adsManagementSettings.model')
 let popupTemplateSettingsModel = require('../models/popupTemplateSettings.model')
 
-const CONTROLLED_TASK_TYPES = ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz']
+const CONTROLLED_TASK_TYPES = ['Captcha', 'DailySpin', 'ScratchCardDailyLimit', 'AppInstall', 'Quiz', 'PlayGame']
 
 const GIFT_VOUCHER_DENOMINATIONS = [10, 20, 30, 50]
 
