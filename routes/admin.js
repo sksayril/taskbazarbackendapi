@@ -45,6 +45,35 @@ let adsManagementSettingsModel = require('../models/adsManagementSettings.model'
 let popupTemplateSettingsModel = require('../models/popupTemplateSettings.model')
 
 
+function getDefaultEarningBreakdown(user) {
+  return {
+    currentCoins: user?.Coins || 0,
+    currentWalletBalance: user?.WalletBalance || 0,
+    totalEarnedCoins: user?.Coins || 0,
+    redeemedCoins: 0,
+    convertedAmount: 0,
+    totalWithdrawn: 0,
+    isVerified: Boolean(user?.IsVerified),
+    verifiedAt: user?.VerifiedAt || null,
+    sources: {
+      taskCompletion: { count: 0, coins: 0 },
+      referral: { count: 0, coins: 0 },
+      offerwall: { count: 0, coins: 0 },
+      scratchCard: { count: 0, coins: 0 },
+      spinWheel: { count: 0, coins: 0 },
+      dailyBonus: { count: 0, coins: 0 },
+      captcha: { count: 0, coins: 0 }
+    },
+    withdrawalsSummary: {
+      total: 0,
+      pending: 0,
+      approved: 0,
+      rejected: 0
+    },
+    recentTransactions: []
+  };
+}
+
 async function getUserEarningBreakdown(userId) {
   try {
     const user = await userModel.findById(userId);
@@ -1286,7 +1315,7 @@ router.get('/users/earnings', verifyAdminToken, async (req, res) => {
         signupTime: user.SignupTime,
         lastLoginTime: user.LastLoginTime,
         isBlocked: user.IsBlocked || false,
-        createdAt: user.createdAt,
+        createdAt: user.createdAt || user.SignupTime || null,
         updatedAt: user.updatedAt
       }
     }))
@@ -1520,6 +1549,17 @@ router.get('/users/:userId', verifyToken, async (req, res) => {
       // Continue even if decryption fails, password will be null
     }
 
+    // Get earning breakdown
+    let earningBreakdown = null;
+    try {
+      earningBreakdown = await getUserEarningBreakdown(userId);
+    } catch (breakdownErr) {
+      console.error('Error fetching earning breakdown for user:', breakdownErr);
+    }
+    if (!earningBreakdown) {
+      earningBreakdown = getDefaultEarningBreakdown(user);
+    }
+
     // Format response with all user details
     const userDetails = {
       userId: user._id,
@@ -1538,7 +1578,7 @@ router.get('/users/:userId', verifyToken, async (req, res) => {
       earningBreakdown: earningBreakdown,
       signupTime: user.SignupTime,
       lastLoginTime: user.LastLoginTime,
-      createdAt: user.createdAt,
+      createdAt: user.createdAt || user.SignupTime || null,
       updatedAt: user.updatedAt,
       statistics: {
         referralCount: referralCount,
