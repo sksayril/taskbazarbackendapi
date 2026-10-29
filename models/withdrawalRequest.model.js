@@ -1,4 +1,4 @@
-let mongoose = require('mongoose')
+﻿let mongoose = require('mongoose')
 
 let schema = new mongoose.Schema({
     UserId: {
@@ -39,6 +39,14 @@ let schema = new mongoose.Schema({
         default: null
     },
     AccountHolderName: {
+        type: String,
+        default: null
+    },
+    QRCodeImage: {
+        type: String,
+        default: null
+    },
+    PaymentProof: {
         type: String,
         default: null
     },

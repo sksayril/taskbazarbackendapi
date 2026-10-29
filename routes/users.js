@@ -1781,6 +1781,8 @@ router.post('/withdrawal/request', verifyToken, async (req, res) => {
       })
     }
 
+    const finalQrImage = QRCodeImage || req.body.qrCodeImage || PaymentProof || req.body.paymentProof || null
+
     // Create withdrawal request
     const withdrawalRequest = await withdrawalRequestModel.create({
       UserId: userId,
@@ -1792,6 +1794,8 @@ router.post('/withdrawal/request', verifyToken, async (req, res) => {
       BankIFSC: BankIFSC || null,
       BankName: BankName || null,
       AccountHolderName: AccountHolderName || null,
+      QRCodeImage: finalQrImage,
+      PaymentProof: finalQrImage,
       Status: 'Pending'
     })
 
